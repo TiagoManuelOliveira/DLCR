@@ -18,12 +18,19 @@ __description__ = "DLCR: Efficient detection of Distant Low Complexity Regions "
 import os
 
 def create_folder(folder):
+    '''
+    If folder for project doesnt exist, create it
+    :param folder: folder name
+    '''
     if os.path.exists(folder) == False:
         print("Folder ", folder, " doesnt exist...\n>", folder, " folder created")
         os.makedirs(folder)
 
 def clean_profiling(positions=True):
-    # files created during profiling process
+    '''
+    Cleans files created during reporting/general profiling
+    :param positions:Bol, keep positions file
+    '''
     files = ["A_D",
              "A_min",
              "A_R",
@@ -57,10 +64,18 @@ def clean_profiling(positions=True):
             os.remove(file)
 
 def clean_dlcr():
+    '''
+    Clean temporary profiling files
+    '''
     files = [".dlcr_1.dna",
              ".dlcr_2.dna",
              ".dlcr_1.inf",
-             ".dlcr_2.inf"]
+             ".dlcr_2.inf",
+             "comparison.seq",
+             "ref_seq.fasta",
+             "seq_db.fasta",
+             "top.txt",
+             "local.fal"]
 
     for file in files:
         if file in os.listdir():
@@ -68,6 +83,13 @@ def clean_dlcr():
 
 
 def check_folder_change(origin, target, file):
+    '''
+    Check if file exists in origin folder. If not changes file path to target
+    :param origin: str origin folder path
+    :param target: str target folder path
+    :param file: str file path to change
+    :return: False if file in origin folder path. New path if file in origin folder path
+    '''
     try:
         file = str(file)
     except:

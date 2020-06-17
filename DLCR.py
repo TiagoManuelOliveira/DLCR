@@ -100,8 +100,8 @@ profiles_variables.add_argument("-tc", "--tandem_compression", action="store", h
                      default=0.7, required=False, metavar=0.7, dest="tc")
 profiles_variables.add_argument("-td", "--tandem_drop", action="store", help="Drop used during tandem profiling",
                                 default=20, required=False, metavar=20, dest="drop_tandem")
-profiles_variables.add_argument("-rt", "--relation_threshold", action="store", help="complexity log2 threshold for relation profiling",
-                     default=1.75, required=False, metavar=1.75, dest="rt")
+profiles_variables.add_argument("-rt", "--relation_threads", action="store", help="relation compression number of threads",
+                     default=2, required=False, metavar=2, dest="threads")
 profiles_variables.add_argument("-rc", "--relation_compression", action="store", dest="rc",
                                 help="compression threshold for relation profiling", default=0.75, required=False, metavar=0.75)
 profile_display.add_argument("-s", "--show", action="store_true", help="generates, saves and displays report of "
@@ -137,13 +137,13 @@ def arg_common(args):
     try:
         level = int(args.level)
     except:
-        raise ValueError("Level must be an integral")
+        raise ValueError("Level must be an integer")
     # window
     #TODO:Windowsize = len/1000 como default
     try:
         window = int(args.window)
     except:
-        raise ValueError("Window must be an integral")
+        raise ValueError("Window must be an integer")
     # threshold
     try:
         threshold = float(args.threshold)
@@ -159,7 +159,7 @@ def arg_common(args):
         if drop > window:
             raise ValueError("Drop can't be greater than window")
     except:
-        raise ValueError("drop must be an integral")
+        raise ValueError("drop must be an integer")
     # show
     show = args.show
 
@@ -197,13 +197,6 @@ def arg_profile(args):
             raise ValueError("tandem compression value must be between 1 and 0")
     except:
         raise ValueError("tandem compression must be a float")
-    # relation threshold
-    try:
-        rt = float(args.rt)
-        if rt > 2 or rt < 0:
-            raise ValueError("relation threshold value must be between 2 and 0")
-    except:
-        raise ValueError("relation threshold must be a float")
     # relation compression
     try:
         rc = float(args.rc)
@@ -211,12 +204,17 @@ def arg_profile(args):
             raise ValueError("relation compression value must be between 1 and 0")
     except:
         raise ValueError("relation compression must be a float")
+    # Threads
+    try:
+        threads = int(args.threads)
+    except:
+        raise ValueError("Thread must be integer")
     # sample type
     sample_type = str(args.sample_type)
     # tandem drop
     drop_tandem = int(args.drop_tandem)
 
-    return multiple, output, org_name, tt, tc, rt, rc, sample_type, drop_tandem
+    return multiple, output, org_name, tt, tc, rc, threads, sample_type, drop_tandem
 
 def arg_report(args):
     '''
@@ -234,16 +232,16 @@ def arg_report(args):
     tt = False
     # tandem compression
     tc = False
-    # relation threshold
-    rt = False
     # relation compression
     rc = False
+    # Threads
+    threads = False
     # sample type
     sample_type = False
     # tandem drop
     drop_tandem = False
 
-    return multiple, output, org_name, tt, tc, rt, rc, sample_type, drop_tandem
+    return multiple, output, org_name, tt, tc, rc, threads, sample_type, drop_tandem
 
 
 def arg_handler():
@@ -257,12 +255,12 @@ def arg_handler():
     fasta, level, window, threshold, drop, show = arg_common(args)
 
     if mode == "profile":
-        multiple, output, org_name, tt, tc, rt, rc, sample_type, drop_tandem = arg_profile(args)
+        multiple, output, org_name, tt, tc, rc, threads, sample_type, drop_tandem = arg_profile(args)
 
     if mode == "report":
-        multiple, output, org_name, tt, tc, rt, rc, sample_type, drop_tandem = arg_report(args)
+        multiple, output, org_name, tt, tc, rc, threads, sample_type, drop_tandem = arg_report(args)
 
-    return mode, fasta, level, window, threshold, drop, multiple, show, output, org_name, tt, tc, rt, rc, sample_type, drop_tandem
+    return mode, fasta, level, window, threshold, drop, multiple, show, output, org_name, tt, tc, rc, threads, sample_type, drop_tandem
 
 def run():
     '''
@@ -272,7 +270,7 @@ def run():
     profile mode, analyzes low complexity regions and produces a profile compliant with RFMS
     :return:
     '''
-    mode, fasta, level, window, threshold, drop, multiple, show, output, org_name, tt, tc, rt, rc , sample_type, drop_tandem = arg_handler()
+    mode, fasta, level, window, threshold, drop, multiple, show, output, org_name, tt, tc, rc, threads, sample_type, drop_tandem = arg_handler()
     if mode == "report":
         #TODO Modify this prints in final version
         print(mode)
@@ -280,8 +278,8 @@ def run():
         profile_report(fasta, level, window, threshold, drop, multiple, show)
     else:
         print(mode)
-        print(fasta, level, window, threshold, drop, output, org_name, tt, tc, rt, rc, show)
-        generate_profile(fasta, level, window, threshold, drop, output, org_name, sample_type, drop_tandem, tt, tc, rt, rc, show)
+        print(fasta, level, window, threshold, drop, output, org_name, tt, tc, rc, threads, show)
+        generate_profile(fasta, level, window, threshold, drop, output, org_name, sample_type, drop_tandem, tt, tc, rc, threads, show)
 
 if __name__ == '__main__':
     run()

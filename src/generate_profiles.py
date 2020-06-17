@@ -20,10 +20,7 @@ __description__ = "DLCR: Efficient detection of Distant Low Complexity Regions "
 
 import csv
 import subprocess
-from itertools import combinations as iter_comb
-from multiprocessing.pool import ThreadPool
 
-import dask
 import matplotlib.pyplot as plt
 import numpy as np
 import tqdm
@@ -31,8 +28,6 @@ from matplotlib import gridspec, ticker
 
 import src.file_cleanup as cleanup
 
-#TODO: See if dask is needed and if not clean it
-dask.config.set(pool=ThreadPool(4))
 
 def check_fasta(fasta):
     '''
@@ -193,7 +188,6 @@ def profile_report(fasta, level, window, threshold, drop, multiple=False, show=F
     :param multiple: bol with information if a multiple window report should be done (default=False)
     :param show: bol with information if the graph should be displayed in a window after completion (default=False)
     :param positions bol indicates if positions file should be cleaned after report completion
-    :return:
     '''
     cleanup.create_folder("graphs")
     fasta_name = str(fasta.split(".")[0] +
@@ -511,8 +505,8 @@ def tandem_compression_profile(drop = 20, threshold = 1.75, compression = 0.70):
         reps_size.append(profile.size)
     size_min = min(reps_size)
     size_max = max(reps_size)
-    rep_min = int(size_max/profile.size)
-    rep_max = int(size_min/profile.size)
+    rep_min = int(profile.size/size_max)
+    rep_max = int(profile.size/size_min)
     return size_min, size_max, rep_min, rep_max
 
 def region_compression_profile(seq1_size, threshold = 1.75, compression = 0.75):
@@ -539,38 +533,110 @@ def regions_associate_known(low_complexity_seqs, threshold=1.75, compression = 0
                                           compression):
                 pass
 
-
-
-
-#@dask.delayed
-def regions_associate_different(low_complexity_seqs, start, keys, relation_threshold, relation_compression, pbar):
+def seq_reference(low_complexity_seqs, key):
     '''
-    Deterimnes relation between identified low complexity regions in report
-    :param low_complexity_seqs: dict with low complexity region information
-    :param start: key of the region used for default comparison
-    :param keys: keys low_complexity_seqs dict, representing each low complexity region
-    :param relation_threshold: log2 complexity threshold for relation compression
-    :param relation_compression: compression % used to determine relation between 2 regions
-    :param pbar: progress bar
-    :return: dict with low complexity regions information
+    Function generates seq reference to use in FALCON
+    :param low_complexity_seqs: dic with low complexity regions
+    :param key: key of low_complexity_seq to be used as ref
     '''
-    for j in range(start+1, len(keys)):
-        if low_complexity_seqs[keys[j]] not in low_complexity_seqs[keys[start]]["related"]:
-            seq_compression(low_complexity_seqs[keys[start]]["seq"], low_complexity_seqs[keys[j]]["seq"])
-            if region_compression_profile(len(low_complexity_seqs[keys[start]]["seq"]), relation_threshold, relation_compression):
-                low_complexity_seqs[keys[start]]["related"].append(j)
-                low_complexity_seqs[keys[j]]["related"].append(start)
+    with open("ref_seq.fasta", "w") as ref_seq:
+        fasta_header = ">" + str(key) + "\n"
+        ref_seq.write(fasta_header)
+        ref_seq.write(low_complexity_seqs[key]["seq"])
+
+def seq_database(low_complexity_seqs, keys):
+    '''
+    Function generates seq_database to use in FALCON
+    :param low_complexity_seqs: dic with low complexity regions
+    :param keys: list of low_complexity_seq keys that are related
+    '''
+    with open("seq_db.fasta", "w") as seq_db:
+        for key in keys:
+            fasta_header = ">"+str(key)+"\n"
+            seq_db.write(fasta_header)
+            seq_db.write(low_complexity_seqs[key]["seq"])
+            seq_db.write("\n\n")
+
+def similarity_read(relation_compression):
+    '''
+    Function that parses top.txt file, resulting of FALCON processing
+    :param relation_compression: compression % used to determine relationship between regions
+    :return: list of similar seqs that correspond to low_complexity_seqs keys
+    '''
+    similar = []
+    with open("top.txt") as top:
+        for line in top:
+            compression =  float(line.replace("\n", "").split("\t")[2])
+            if compression >= relation_compression:
+                similar.append(int(line.replace("\n", "").split("\t")[3]))
+            else:
+                break
+    return similar
+
+def run_falcon(level=str(4), top_size=str(20), threads=str(2)):
+    '''
+    Run Falcon for similaraity assessment
+    :param level: int with FALCON level
+    :param top_size: number of top seqs for top.txt
+    :param threads: int of threads for precessin
+    '''
+    threads = str(threads)
+    command = ["FALCON", "-F", "-l", level, "-t", top_size, "-n", threads, "-x", "top.txt",
+               "ref_seq.fasta", "seq_db.fasta"]
+    seq = subprocess.run(args=command, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, check=True)
+
+def regions_assotiate_reversed(low_complexity_seqs, key, related, relation_compression, threads=str(2)):
+    '''
+    function determines if low complexity regions are associated by reverse sequence
+    :param low_complexity_seqs: dic with low complexity regions
+    :param key: key of low_complexity_seq to be used as ref
+    :param related: list of low_complexity_seq keys that are related
+    :param relation_compression: compression % used to determine relationship between regions
+    :param threads:  int of threads for precessing
+    :return: dic with low complexity regions
+    '''
+
+    seq_database(low_complexity_seqs, related)
+    level = str(3)
+    top_size = str(len(related))
+    threads = str(threads)
+    run_falcon(level, top_size, threads)
+    similar = similarity_read(relation_compression)
+    if similar:
+        low_complexity_seqs[key]["reversed"] = float(len(similar)/len(related))
+    return low_complexity_seqs
 
 
-        seq_compression(low_complexity_seqs[keys[start]]["seq"], reverse_seq(low_complexity_seqs[keys[j]]["seq"]))
-        if region_compression_profile(len(low_complexity_seqs[keys[start]]["seq"]), relation_threshold,
-                                        relation_compression):
-            low_complexity_seqs[keys[start]]["reversed"] = low_complexity_seqs[keys[start]]["reversed"] + 1
-            low_complexity_seqs[keys[j]]["reversed"] + low_complexity_seqs[keys[j]]["reversed"] + 1
-            if j not in low_complexity_seqs[keys[start]]["related"]:
-                low_complexity_seqs[keys[start]]["reversed"] = low_complexity_seqs[keys[start]]["reversed"] + 1
-                low_complexity_seqs[keys[j]]["related"].append(start)
-        pbar.update(1)
+def regions_associate_different(low_complexity_seqs, relation_compression, threads=2):
+    '''
+    function determines relation between low complexity regions
+    :param low_complexity_seqs: dic with low complexity regions
+    :param relation_compression: compression % used to determine relationship between regions
+    :param threads: int of threads for precessing
+    :return: dic with low complexity regions
+    '''
+    regions_keys = list(low_complexity_seqs.keys())
+    level = str(4)
+    top_size = str(len(regions_keys))
+    threads = str(threads)
+
+    with tqdm.tqdm(total=len(regions_keys), desc="relations", position=2, leave=False) as pbar:
+        for i_key in range(0,len(regions_keys)):
+            seq_reference(low_complexity_seqs, regions_keys[i_key])
+            seq_database(low_complexity_seqs, regions_keys[i_key+1:])
+            run_falcon(level, top_size, threads)
+            similar = similarity_read(relation_compression)
+            if similar:
+                temp_similar = low_complexity_seqs[regions_keys[i_key]]["related"]
+                temp_similar = temp_similar + similar
+                low_complexity_seqs[regions_keys[i_key]]["related"] = temp_similar
+                for similar_region in similar:
+                    temp_similar = low_complexity_seqs[similar_region]["related"]
+                    temp_similar += [regions_keys[i_key]]
+                    low_complexity_seqs[similar_region]["related"] = temp_similar
+                low_complexity_seqs = regions_assotiate_reversed(low_complexity_seqs, regions_keys[i_key],
+                                                                 similar, relation_compression, threads)
+            pbar.update(1)
     return low_complexity_seqs
 
 
@@ -583,7 +649,7 @@ def regions_associate_tandems(low_complexity_seqs, drop=20, tandem_threshold=1.7
     :param tandem_compression: compression % used to determine presence of tandem sequence
     :return: dict with low complexity regions information
     '''
-    with tqdm.tqdm(total=len(list(low_complexity_seqs.keys())), desc="Managing Tandems", position=2, leave=True) as tbar:
+    with tqdm.tqdm(total=len(list(low_complexity_seqs.keys())), desc="Managing Tandems", position=2, leave=False) as tbar:
         for key in low_complexity_seqs.keys():
             seq_compression(low_complexity_seqs[key]["seq"])  # Compress single sequence
             size_min, size_max, rep_min, rep_max = tandem_compression_profile(drop, tandem_threshold, tandem_compression)
@@ -591,49 +657,29 @@ def regions_associate_tandems(low_complexity_seqs, drop=20, tandem_threshold=1.7
                 low_complexity_seqs[key]["min_tandem"] = rep_min
                 low_complexity_seqs[key]["max_tandem"] = rep_max
             tbar.update(1)
-        return low_complexity_seqs
-
-
-
     return low_complexity_seqs
 
-def regions_associate(low_complexity_seqs, drop = 20, tandem_threshold=1.75, tandem_compression=0.7, relation_threshold=1.75,
-                      relation_compression=0.75):
+def regions_associate(low_complexity_seqs, drop = 20, tandem_threshold=1.75, tandem_compression=0.7,
+                      relation_compression=0.75, threads=2):
     '''
     Determines association between different sequences, tandem and low complexity regions
     :param low_complexity_seqs: dict with low complexity region information
     :param drop: drop to be used during tandem seq search
     :param tandem_threshold: log2 complexity threshold for tandem compression
     :param tandem_compression: compression % used to determine presence of tandem sequence
-    :param relation_threshold: log2 complexity threshold for relation compression
     :param relation_compression: compression % used to determine relation between 2 regions
+    :param threads: int with number of threads for relation profile processing
     :return: dict with low complexity regions information
     '''
-
+    #TODO:ADD known sequences
     #low_complexity_seqs = regions_associate_known(low_complexity_seqs, tandem_threshold, tandem_compression)
     low_complexity_seqs = regions_associate_tandems(low_complexity_seqs, drop, tandem_threshold, tandem_compression)
 
     keys = list(low_complexity_seqs.keys())
-
-    with tqdm.tqdm(total=len(list(iter_comb(keys, 2))), desc="relations", position=2,
-                   leave=True) as pbar:
-        for i in range(0, len(keys)):
-            low_complexity_seqs =  regions_associate_different(low_complexity_seqs, i, keys, relation_threshold,
-                                                               relation_compression, pbar)
+    low_complexity_seqs = regions_associate_different(low_complexity_seqs, relation_compression, threads=2)
 
     return low_complexity_seqs
 
-def calculate_reversed(low_complexity_seqs):
-    '''
-    Calculates reversed sequence probability
-    :param low_complexity_seqs: dict with low complexity region information
-    :return: dict with low complexity regions information
-    '''
-    for rep in low_complexity_seqs.keys():
-        if low_complexity_seqs[rep]["related"]:
-            low_complexity_seqs[rep]["reversed"] = low_complexity_seqs[rep]["reversed"] / \
-                                                   (1 + len(low_complexity_seqs[rep]["related"]))
-    return low_complexity_seqs
 
 def calculate_percentages(fasta):
     '''
@@ -666,38 +712,6 @@ def calculate_percentages(fasta):
             return a, t, g, c, size
         else:
             return False, False, False, False, False
-
-
-'''
-            if line.replace("\n","") and passed:
-                seq = str(line).replace("\n", "").lower()
-                a += seq.count("a")
-                t += seq.count("t")
-                g += seq.count("g")
-                c += seq.count("c")
-                size += len(seq)
-                passed = True
-                
-                
-                a = float(a / size)
-                t = float(t / size)
-                g = float(g / size)
-                c = float(c / size)
-                return a, t, g, c, size
-            elif line.startswith("<") and not passed:
-                passed = True
-            
-            else:
-                seq = str(line).replace("\n","").lower()
-                a += seq.count("a")
-                t += seq.count("t")
-                g += seq.count("g")
-                c += seq.count("c")
-                size += len(seq)
-                passed = True
-        return False, False, False, False, False
-'''
-
 
 
 
@@ -738,7 +752,7 @@ def generate_csv_dict(low_complexity_seqs, size_seq):
     regions_parsed = set()
     repeat = 1
     for region in regions:
-        related = low_complexity_seqs[region]["related"]
+        related = low_complexity_seqs[region]["related"].copy()
         if region not in regions_parsed or (region in regions_parsed and related):
             nr_regions = 1
             size = np.array(len(low_complexity_seqs[region]["seq"]))
@@ -747,29 +761,28 @@ def generate_csv_dict(low_complexity_seqs, size_seq):
             reversed = np.array(float(low_complexity_seqs[region]["reversed"]))
             windows = {}
             pos = int(low_complexity_seqs[region]["pos"])
-            window_size = size_seq/10
+            window_size = int(size_seq/10)
             for window in  range(1,11):
                 if pos < (window_size*window) and pos >= ((window_size*window)-window_size):
                     windows[window] = [pos]
                 else:
                     windows[window] = []
             for related_region in related:
-                nr_regions += 1
-                related_region = int(related_region)
-                size = np.append(size, len(low_complexity_seqs[related_region]["seq"]))
+                nr_regions+=1
                 min_tandem = np.append(min_tandem, int(low_complexity_seqs[related_region]["min_tandem"]))
                 max_tandem = np.append(max_tandem, int(low_complexity_seqs[related_region]["max_tandem"]))
                 reversed = np.append(reversed, float(low_complexity_seqs[related_region]["reversed"]))
-                low_complexity_seqs[related_region]["related"].remove(region)
                 low_complexity_seqs[region]["related"].remove(related_region)
+                low_complexity_seqs[related_region]["related"].remove(region)
+                size = np.append(size, np.array(len(low_complexity_seqs[related_region]["seq"])))
+                for i in related:
+                    if related_region in low_complexity_seqs[i]["related"]:
+                        low_complexity_seqs[i]["related"].remove(related_region)
                 pos = int(low_complexity_seqs[related_region]["pos"])
                 for window in range(1, 11):
                     if pos < (window_size * window) and pos >= ((window_size * window) - window_size):
                         windows[window].append(pos)
-                for i in related:
-                    i = int(i)
-                    low_complexity_seqs[related_region]["related"].remove(i)
-            related.append(region)
+
             regions_parsed.update(related)
             min_tandem = float(min_tandem.min())
             max_tandem = float(max_tandem.max())
@@ -781,79 +794,100 @@ def generate_csv_dict(low_complexity_seqs, size_seq):
                 min_nr_regions = 1
                 max_nr_regions = 2
             else:
-                min_nr_regions = nr_regions - (nr_regions / 2)
-                max_nr_regions = nr_regions + (nr_regions / 2)
-            reversed = float(reversed.mean())
-            window1_prob = str(len(windows[1])/nr_regions)
+                min_nr_regions = int(nr_regions - (nr_regions / 2))
+                max_nr_regions = int(nr_regions + (nr_regions / 2))
+            reversed = round(float(reversed.mean()),3)
+            window1_prob = str(round(len(windows[1])/nr_regions, 3))
             if windows[1]:
-                window1_std = str(np.array(windows[1]).std())
-                window1_mean = str(np.array(windows[1]).mean())
+                window1_std = str(round(np.array(windows[1]).std(),3))
+                window1_mean = str(round(np.array(windows[1]).mean(),3))
+                if window1_std == "0.0":
+                    window1_std = str(round(window_size*0.05,3))
             else:
                 window1_std = str(0.0)
                 window1_mean = str(0.0)
-            window2_prob = str(len(windows[2])/nr_regions)
+            window2_prob = str(round(len(windows[2])/nr_regions,3))
             if windows[2]:
-                window2_std = str(np.array(windows[2]).std())
-                window2_mean = str(np.array(windows[2]).mean())
+                window2_std = str(round(np.array(windows[2]).std(),3))
+                window2_mean = str(round(np.array(windows[2]).mean(),3))
+                if window2_std == "0.0":
+                    window2_std = str(round(window_size*0.05,3))
             else:
                 window2_std = str(0.0)
                 window2_mean = str(0.0)
-            window3_prob = str(len(windows[3])/nr_regions)
+            window3_prob = str(round(len(windows[3])/nr_regions,3))
             if windows[3]:
-                window3_std = str(np.array(windows[3]).std())
-                window3_mean = str(np.array(windows[3]).mean())
+                window3_std = str(round(np.array(windows[3]).std(),3))
+                window3_mean = str(round(np.array(windows[3]).mean(),3))
+                if window3_std == "0.0":
+                    window3_std = str(round(window_size*0.05,3))
             else:
                 window3_std = str(0.0)
                 window3_mean = str(0.0)
-            window4_prob = str(len(windows[4])/nr_regions)
+            window4_prob = str(round(len(windows[4])/nr_regions,3))
             if windows[4]:
-                window4_std = str(np.array(windows[4]).std())
-                window4_mean = str(np.array(windows[4]).mean())
+                window4_std = str(round(np.array(windows[4]).std(),3))
+                window4_mean = str(round(np.array(windows[4]).mean(),3))
+                if window4_std == "0.0":
+                    window4_std = str(round(window_size*0.05,3))
             else:
                 window4_std = str(0.0)
                 window4_mean = str(0.0)
-            window5_prob = str(len(windows[5])/nr_regions)
+            window5_prob = str(round(len(windows[5])/nr_regions,3))
             if windows[5]:
-                window5_std = str(np.array(windows[5]).std())
-                window5_mean = str(np.array(windows[5]).mean())
+                window5_std = str(round(np.array(windows[5]).std(),3))
+                window5_mean = str(round(np.array(windows[5]).mean(),3))
+                if window5_std == "0.0":
+                    window5_std = str(round(window_size*0.05,3))
             else:
                 window5_std = str(0.0)
                 window5_mean = str(0.0)
-            window6_prob = str(len(windows[6])/nr_regions)
+            window6_prob = str(round(len(windows[6])/nr_regions,3))
             if windows[6]:
-                window6_std = str(np.array(windows[6]).std())
-                window6_mean = str(np.array(windows[6]).mean())
+                window6_std = str(round(np.array(windows[6]).std(),3))
+                window6_mean = str(round(np.array(windows[6]).mean(),3))
+                if window6_std == "0.0":
+                    window6_std = str(round(window_size*0.05,3))
             else:
                 window6_std = str(0.0)
                 window6_mean = str(0.0)
-            window7_prob = str(len(windows[7])/nr_regions)
+            window7_prob = str(round(len(windows[7])/nr_regions,3))
             if windows[7]:
-                window7_std = str(np.array(windows[7]).std())
-                window7_mean = str(np.array(windows[7]).mean())
+                window7_std = str(round(np.array(windows[7]).std(),3))
+                window7_mean = str(round(np.array(windows[7]).mean(),3))
+                if window7_std == "0.0":
+                    window7_std = str(round(window_size*0.05,3))
             else:
                 window7_std = str(0.0)
                 window7_mean = str(0.0)
-            window8_prob = str(len(windows[8])/nr_regions)
+            window8_prob = str(round(len(windows[8])/nr_regions,3))
             if windows[8]:
-                window8_std = str(np.array(windows[8]).std())
-                window8_mean = str(np.array(windows[8]).mean())
+                window8_std = str(round(np.array(windows[8]).std(),3))
+                window8_mean = str(round(np.array(windows[8]).mean(),3))
+                if window8_std == "0.0":
+                    window8_std = str(round(window_size*0.05,3))
             else:
                 window8_std = str(0.0)
                 window8_mean = str(0.0)
-            window9_prob = str(len(windows[9])/nr_regions)
+            window9_prob = str(round(len(windows[9])/nr_regions,3))
             if windows[9]:
-                window9_std = str(np.array(windows[9]).std())
-                window9_mean = str(np.array(windows[9]).mean())
+                window9_std = str(round(np.array(windows[9]).std(),3))
+                window9_mean = str(round(np.array(windows[9]).mean(),3))
+                if window9_std == "0.0":
+                    window9_std = str(round(window_size*0.05,3))
             else:
                 window9_std = str(0.0)
                 window9_mean = str(0.0)
-            window10_prob = str(len(windows[10])/nr_regions)
+            window10_prob = str(round(len(windows[10])/nr_regions,3))
             if windows[10]:
-                window10_std = str(np.array(windows[10]).std())
-                window10_mean = str(np.array(windows[10]).mean())
+                window10_std = str(round(np.array(windows[10]).std(),3))
+                window10_mean = str(round(np.array(windows[10]).mean(),3))
+                if window10_std == "0.0":
+                    window10_std = str(round(window_size*0.05,3))
             else:
                 window10_std = str(0.0)
                 window10_mean = str(0.0)
+
 
             csv_dict[repeat] = {"min_tandem":min_tandem, "max_tandem":max_tandem, "min_size":min_size,"max_size":max_size,
                                 "min_nr_regions":min_nr_regions, "max_nr_regions":max_nr_regions, "reversed":reversed,
@@ -890,19 +924,41 @@ def generate_csv(org_name, csv_dict):
 
 
 def generate_profile(fasta, level, window, threshold, drop, output, org_name, sample_type,
-                     drop_tandem = 20, tt=1.75, tc=0.7, rt=1.75, rc=0.75, show=False):
-    ''''''
-    if show:
-        profile_report(fasta, level, window, threshold, drop, False, show, False)
-    else:
-        profile_fasta(fasta, level, window, threshold, drop)
-        cleanup.clean_profiling(False)
-    with tqdm.tqdm(total=5, desc="Generating Profiles", position=1, leave=False) as mbar:
+                     drop_tandem = 20, tt=1.75, tc=0.7, rc=0.75, threads=2, show=False):
+    '''
+    Functions generates a profile of low complexity regions in a genomic sequence using gto
+    compression tools and FALCON.
+    :param fasta: str with name of the .FASTA file to profiled
+    :param level: int with level to be used internally in GTO for compression profiling
+    :param window: int with length of window to be used for compression profiling
+    :param threshold: float with threshold for compression profiling (between 0.0 and 2.0)
+    :param drop: int with drop of compression profiling (sensibility of compression)
+    :param output: str of output INI file
+    :param org_name: str with org name for INI file and profile
+    :param sample_type: str with sample type of org
+    :param drop_tandem: int with drop to be used during tandem seq search
+    :param tt: float log2 complexity threshold for tandem compression
+    :param tc: int compression % used to determine presence of tandem sequence
+    :param rc: int compression % used to determine relation between 2 regions
+    :param threads: int number of threads for relation profiling processing
+    :param show: bol with information if the graph should be displayed in a window after completion (default=False)
+    :return:
+    '''
+
+    with tqdm.tqdm(total=6, desc="Generating Profiles", position=1, leave=True) as mbar:
+        if show:
+            profile_report(fasta, level, window, threshold, drop, False, show, False)
+        else:
+            profile_fasta(fasta, level, window, threshold, drop)
+            cleanup.clean_profiling(False)
+        mbar.update(1)
+
+
         low_complexity_seqs = regions_info(fasta)
         mbar.update(1)
-        low_complexity_seqs = regions_associate(low_complexity_seqs, drop_tandem, tt, tc, rt, rc)
-        mbar.update(1)
-        low_complexity_seqs = calculate_reversed(low_complexity_seqs)
+        low_complexity_seqs = regions_associate(low_complexity_seqs, drop_tandem, tt, tc, rc, threads)
+        cleanup.clean_profiling(True)
+        cleanup.clean_dlcr()
         mbar.update(1)
         size = generate_INI(fasta, output, org_name, sample_type)
         mbar.update(1)
